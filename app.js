@@ -35,7 +35,7 @@ async function loadClassData(){
 }
 
 async function populateRollChoices(){
-  const select=$('#requestedRoll');select.innerHTML='<option value="">Choose your roll number…</option>'+Array.from({length:67},(_,i)=>`<option value="${i+1}">Roll ${i+1}</option>`).join('');
+  const select=$('#requestedRoll');select.innerHTML='<option value="">Choose your roll number…</option>'+Array.from({length:72},(_,i)=>`<option value="${i+1}">Roll ${i+1}</option>`).join('');
   if(profile?.requested_roll)select.value=String(profile.requested_roll);
   $('#requestStatus').textContent=profile?.requested_roll?`Request for roll ${profile.requested_roll} is waiting for teacher approval.`:'Choose your roll number and request access. The teacher will approve it.';
 }
@@ -57,7 +57,7 @@ function renderRoster(){
 function renderStats(){
   const m=activeModule==='all'?ROSTER:ROSTER.filter(s=>s.module===+activeModule),done=m.filter(s=>s.completed),pct=m.length?Math.round(done.length/m.length*100):0;
   $('#totalStat').textContent=m.length;$('#doneStat').textContent=done.length;$('#remainingStat').textContent=m.length-done.length;
-  $('#m2Count').textContent=`${ROSTER.filter(s=>s.module===2&&s.completed).length} / 34`;$('#m3Count').textContent=`${ROSTER.filter(s=>s.module===3&&s.completed).length} / 33`;
+  $('#m2Count').textContent=`${ROSTER.filter(s=>s.module===2&&s.completed).length} / 37`;$('#m3Count').textContent=`${ROSTER.filter(s=>s.module===3&&s.completed).length} / 33`;
   $('#completionPct').textContent=`${pct}%`;$('#progressFill').style.width=`${pct}%`;$('.progress-track').setAttribute('aria-valuenow',pct);
   $('#completionSummary').textContent=`${done.length} of ${m.length} students have presented${activeModule==='all'?'':` · Module ${activeModule}`}`;
   $('#completedCount').textContent=`${done.length} completed`;

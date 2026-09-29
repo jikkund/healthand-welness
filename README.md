@@ -6,4 +6,4 @@ This is the public static app bundle for GitHub Pages. The Supabase publishable 
 
 Upload the files in this folder to the root of `jikkund/healthand-welness`, then enable GitHub Pages from the `main` branch and `/ (root)`.
 
-The app requires Supabase Auth and the schema in the private setup instructions before students can use it. Keep the SQL file containing the student roster out of this public repository.
+Students can use the shared app link without accounts to browse the roster, download each student's latest file beside their name, and preview PDF/PPTX presentations in the app. The teacher signs in and draws the active presenter; uploads and Canva links are filed for that presenter, so students cannot choose a name. Marking or undoing completion requires teacher sign-in and a fresh password check. Run the optional `public_student_access.sql` migration from the private setup folder to enable public submissions. Anyone with the link can submit a file or Canva link for the active presenter, and submitted files are visible to people with the link. Keep all private setup SQL files out of this public repository.

@@ -3,7 +3,7 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL, STUDENT
 
 const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{experimental:{passkey:true}}});
 const $=s=>document.querySelector(s);
-let roster=[],teacher=null,current=null,busy=false,presentationsByRoll=new Map();
+let roster=[],teacher=null,current=null,busy=false,presentationsByRoll=new Map(),presentationsLoaded=false;
 const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function message(id,text,error=false){const e=$(id);e.textContent=text;e.style.color=error?'#a9473c':'';}
 function isTeacher(){return teacher?.role==='teacher';}
@@ -12,7 +12,7 @@ function accessUI(){
   $('#drawBtn').disabled=!isTeacher()||busy;$('#doneBtn').disabled=!isTeacher()||busy||!current||current.completed;
   $('#drawHint').textContent=isTeacher()?'Teacher access is active. Confirm with your password or a device passkey for each action.':'Teacher sign-in is required to use the picker or change completion.';
   $('#registerPasskeyBtn').hidden=!isTeacher();
-  renderRoster();renderProgress();
+  renderRoster();renderProgress();renderUploadProgress();
 }
 function parseCSV(text){
   const rows=[];let row=[],cell='',quoted=false;
@@ -53,10 +53,10 @@ async function loadRoster(){
   if(error){message('#appMessage',`Could not load students: ${error.message}`,true);return;}
   let sheetNames=null;
   try{sheetNames=await loadSheetNames();}catch(e){message('#appMessage',`Could not read the linked roster sheet: ${e.message}`,true);}
-  try{presentationsByRoll=await loadPresentations();}catch(e){presentationsByRoll=new Map();message('#appMessage',`Could not load presentation previews: ${e.message}`,true);}
+  try{presentationsByRoll=await loadPresentations();presentationsLoaded=true;}catch(e){presentationsByRoll=new Map();presentationsLoaded=false;message('#appMessage',`Could not load presentation links: ${e.message}`,true);}
   roster=(data||[]).map(s=>({...s,name:sheetNames?.get(s.roll)||s.full_name}));
   if(sheetNames){const missing=[...sheetNames.keys()].filter(roll=>!roster.some(s=>s.roll===roll));if(missing.length)message('#appMessage',`${missing.length} roll number(s) in the sheet are not in the class database; add them to Supabase before they can be picked or marked.`,true);}
-  $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();
+  $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();renderUploadProgress();
   const {data:state}=await supabase.from('class_state').select('active_roll').eq('id',true).maybeSingle();
   current=roster.find(s=>s.roll===state?.active_roll)||null;showCurrent();
 }
@@ -93,6 +93,16 @@ function renderProgress(){
   $('#completionSummary').textContent=`${done.length} of ${roster.length} students completed`;
   $('#completedCount').textContent=`${done.length} completed`;
   $('#completedList').innerHTML=done.map(s=>`<div class="done-item">✓ &nbsp; ${escapeHTML(s.name)} <span class="count">· Roll ${s.roll}</span></div>`).join('')||'<div class="count">No students completed yet.</div>';
+}
+function renderUploadProgress(){
+  const uploaded=roster.filter(s=>presentationsByRoll.has(s.roll));
+  const pending=roster.filter(s=>!presentationsByRoll.has(s.roll));
+  const pct=roster.length?Math.round(uploaded.length/roster.length*100):0;
+  $('#uploadPct').textContent=presentationsLoaded?`${pct}%`:'—';
+  $('#uploadFill').style.width=presentationsLoaded?`${pct}%`:'0%';
+  $('#uploadSummary').textContent=presentationsLoaded?`${uploaded.length} of ${roster.length} students have a presentation link`:'Could not load the presentation sheet';
+  $('#uploadMissingCount').textContent=presentationsLoaded?`${pending.length} still to upload`:'Waiting for sheet access';
+  $('#uploadMissingList').innerHTML=!presentationsLoaded?'<div class="count">Check that the Student Presentations tab is published for anyone with the link.</div>':pending.map(s=>`<div class="pending-item">○ &nbsp; ${escapeHTML(s.name)} <span class="count">· Roll ${s.roll}</span></div>`).join('')||'<div class="count">Everyone has added a presentation link.</div>';
 }
 function showCurrent(){
   $('#selection').innerHTML=current?`<div><div class="picked-name">${escapeHTML(current.name)}</div><div class="picked-sub">Roll ${current.roll}${current.completed?' · Completed':''}</div></div>`:'<div class="picked-sub">No student picked yet.</div>';

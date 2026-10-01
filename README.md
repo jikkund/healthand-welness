@@ -8,7 +8,7 @@ Names load from the published `Public Roster` sheet as CSV. Keep the source work
 
 Presentation topics and URLs are loaded from a separate published `Student Presentations` tab as CSV; the source worksheet stays unpublished. Only roll number, student name, topic, and the corresponding presentation URL from that dedicated tab are exposed to app visitors.
 
-Each student with a presentation link has a **Preview** button beside their name. It opens an in-app PDF, Google Slides, Canva, or PowerPoint viewer where the provider permits embedding, with an external link as a fallback.
+The dashboard also shows the percentage of students with a presentation URL in Sheet1 and lists students who still have no URL. It refreshes from the published Student Presentations tab every 10 seconds. Each student with a presentation link has a **Preview** button beside their name. It opens an in-app PDF, Google Slides, Canva, or PowerPoint viewer where the provider permits embedding, with an external link as a fallback.
 
 The app falls back to Supabase names while the CSV setting is blank. Never place a Supabase secret/service-role key in this folder.
 

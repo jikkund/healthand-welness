@@ -3,7 +3,7 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL, STUDENT
 
 const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{experimental:{passkey:true}}});
 const $=s=>document.querySelector(s);
-let roster=[],teacher=null,current=null,busy=false,presentationsByRoll=new Map(),presentationsLoaded=false;
+let roster=[],teacher=null,current=null,busy=false,presentationsByRoll=new Map(),presentationsLoaded=false,rosterFilter='all';
 const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function message(id,text,error=false){const e=$(id);e.textContent=text;e.style.color=error?'#a9473c':'';}
 function isTeacher(){return teacher?.role==='teacher';}
@@ -61,8 +61,8 @@ async function loadRoster(){
   current=roster.find(s=>s.roll===state?.active_roll)||null;showCurrent();
 }
 function renderRoster(){
-  const q=$('#search').value.trim().toLowerCase(),list=roster.filter(s=>s.name.toLowerCase().includes(q)||String(s.roll).includes(q));
-  $('#studentList').innerHTML=list.map(s=>{const presentation=presentationsByRoll.get(s.roll);return `<div class="row"><div class="name">${escapeHTML(s.name)}<div class="roll">Roll ${s.roll}${presentation?.topic?` · ${escapeHTML(presentation.topic)}`:''}</div></div>${presentation?`<button class="preview-button" data-presentation-roll="${s.roll}" aria-label="Preview ${escapeHTML(s.name)}’s presentation">Preview</button>`:'<span class="no-preview">No presentation link</span>'}<span class="badge ${s.completed?'done':''}">${s.completed?'Completed':'Not completed'}</span>${isTeacher()?`<button class="teacher status-toggle" data-roll="${s.roll}" aria-label="Change completion for ${escapeHTML(s.name)}">${s.completed?'Undo':'Mark done'}</button>`:''}</div>`;}).join('')||'<div class="count">No students found.</div>';
+  const q=$('#search').value.trim().toLowerCase(),list=roster.filter(s=>{const uploaded=presentationsByRoll.has(s.roll);const matches=s.name.toLowerCase().includes(q)||String(s.roll).includes(q);return matches&&(rosterFilter==='all'||(rosterFilter==='pending'&&!uploaded)||(rosterFilter==='uploaded'&&uploaded)||(rosterFilter==='completed'&&s.completed));});
+  $('#studentList').innerHTML=list.map(s=>{const presentation=presentationsByRoll.get(s.roll),initials=s.name.split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('');return `<div class="row"><div class="avatar" aria-hidden="true">${escapeHTML(initials)}</div><div class="name">${escapeHTML(s.name)}<div class="roll">Roll ${s.roll}${presentation?.topic?` · ${escapeHTML(presentation.topic)}`:''}</div></div>${presentation?`<button class="preview-button" data-presentation-roll="${s.roll}" aria-label="Preview ${escapeHTML(s.name)}’s presentation">Preview</button>`:'<span class="no-preview">No link</span>'}<span class="badge ${s.completed?'done':''}">${s.completed?'Completed':'Not completed'}</span>${isTeacher()?`<button class="teacher status-toggle" data-roll="${s.roll}" aria-label="Change completion for ${escapeHTML(s.name)}">${s.completed?'Undo':'Mark done'}</button>`:''}</div>`;}).join('')||'<div class="count">No students match this filter.</div>';
   document.querySelectorAll('.status-toggle').forEach(b=>b.onclick=()=>setStatus(+b.dataset.roll,!roster.find(s=>s.roll===+b.dataset.roll)?.completed));
   document.querySelectorAll('.preview-button').forEach(b=>b.onclick=()=>previewStudentPresentation(+b.dataset.presentationRoll));
 }
@@ -89,7 +89,9 @@ function previewStudentPresentation(roll){
 }
 function renderProgress(){
   const done=roster.filter(s=>s.completed),pct=roster.length?Math.round(done.length/roster.length*100):0;
+  $('#completionDonut').style.setProperty('--progress',`${pct}%`);$('#studentTotal').textContent=roster.length;$('#completedStat').textContent=done.length;$('#completedStatNote').textContent=`${pct}% of the class has presented`;
   $('#completionPct').textContent=`${pct}%`;$('#progressFill').style.width=`${pct}%`;
+  $('#completionLegendDone').textContent=done.length;$('#completionLegendPending').textContent=roster.length-done.length;
   $('#completionSummary').textContent=`${done.length} of ${roster.length} students completed`;
   $('#completedCount').textContent=`${done.length} completed`;
   $('#completedList').innerHTML=done.map(s=>`<div class="done-item">✓ &nbsp; ${escapeHTML(s.name)} <span class="count">· Roll ${s.roll}</span></div>`).join('')||'<div class="count">No students completed yet.</div>';
@@ -99,6 +101,7 @@ function renderUploadProgress(){
   const pending=roster.filter(s=>!presentationsByRoll.has(s.roll));
   const pct=roster.length?Math.round(uploaded.length/roster.length*100):0;
   $('#uploadPct').textContent=presentationsLoaded?`${pct}%`:'—';
+  $('#uploadDonut').style.setProperty('--progress',presentationsLoaded?`${pct}%`:'0%');$('#uploadStat').textContent=presentationsLoaded?`${uploaded.length} / ${roster.length}`:'—';$('#uploadStatNote').textContent=presentationsLoaded?`${pct}% of the class has shared a link`:'Waiting for sheet data';$('#uploadLegendDone').textContent=presentationsLoaded?uploaded.length:'—';$('#uploadLegendPending').textContent=presentationsLoaded?pending.length:'—';
   $('#uploadFill').style.width=presentationsLoaded?`${pct}%`:'0%';
   $('#uploadSummary').textContent=presentationsLoaded?`${uploaded.length} of ${roster.length} students have a presentation link`:'Could not load the presentation sheet';
   $('#uploadMissingCount').textContent=presentationsLoaded?`${pending.length} still to upload`:'Waiting for sheet access';
@@ -172,6 +175,7 @@ function sessionChanged(session){
   return sessionQueue;
 }
 $('#search').oninput=renderRoster;
+document.querySelectorAll('[data-filter]').forEach(button=>button.onclick=()=>{rosterFilter=button.dataset.filter;document.querySelectorAll('[data-filter]').forEach(chip=>chip.classList.toggle('active',chip===button));renderRoster();});
 $('#closePresentation').onclick=()=>{$('#presentationScreen').hidden=true;$('#presentationFrame').removeAttribute('src');};
 $('#teacherLoginBtn').onclick=()=>{$('#authScreen').hidden=false;$('#authPassword').value='';message('#authMessage','');};
 $('#closeTeacherLogin').onclick=()=>$('#authScreen').hidden=true;

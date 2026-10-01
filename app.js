@@ -1,7 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL } from './config.js';
 
-const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{experimental:{passkey:true}}});
 const $=s=>document.querySelector(s);
 let roster=[],teacher=null,current=null,busy=false;
 const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -10,13 +10,41 @@ function isTeacher(){return teacher?.role==='teacher';}
 function accessUI(){
   $('#teacherLoginBtn').hidden=isTeacher();$('#signOutBtn').hidden=!isTeacher();
   $('#drawBtn').disabled=!isTeacher()||busy;$('#doneBtn').disabled=!isTeacher()||busy||!current||current.completed;
-  $('#drawHint').textContent=isTeacher()?'Teacher access is active. Enter your password each time you pick or change a status.':'Teacher sign-in is required to use the picker or change completion.';
+  $('#drawHint').textContent=isTeacher()?'Teacher access is active. Confirm with your password or a device passkey for each action.':'Teacher sign-in is required to use the picker or change completion.';
+  $('#registerPasskeyBtn').hidden=!isTeacher();
   renderRoster();renderProgress();
+}
+function parseCSV(text){
+  const rows=[];let row=[],cell='',quoted=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(quoted){if(c==='"'&&text[i+1]==='"'){cell+='"';i++;}else if(c==='"')quoted=false;else cell+=c;}
+    else if(c==='"')quoted=true;
+    else if(c===','){row.push(cell);cell='';}
+    else if(c==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell='';}
+    else cell+=c;
+  }
+  if(cell||row.length){row.push(cell.replace(/\r$/,''));rows.push(row);}
+  return rows;
+}
+async function loadSheetNames(){
+  if(!STUDENT_ROSTER_CSV_URL)return null;
+  const response=await fetch(STUDENT_ROSTER_CSV_URL,{cache:'no-store'});
+  if(!response.ok)throw new Error(`Roster sheet returned HTTP ${response.status}`);
+  const rows=parseCSV(await response.text());
+  const names=new Map();
+  for(const cells of rows){const roll=Number.parseInt(cells[0],10),name=(cells[1]||'').trim();if(Number.isInteger(roll)&&name)names.set(roll,name);}
+  if(!names.size)throw new Error('The published roster has no rows with Roll No and Student Name.');
+  return names;
 }
 async function loadRoster(){
   const {data,error}=await supabase.from('students').select('roll,full_name,completed,module').order('roll');
   if(error){message('#appMessage',`Could not load students: ${error.message}`,true);return;}
-  roster=(data||[]).map(s=>({...s,name:s.full_name}));$('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();
+  let sheetNames=null;
+  try{sheetNames=await loadSheetNames();}catch(e){message('#appMessage',`Could not read the linked roster sheet: ${e.message}`,true);}
+  roster=(data||[]).map(s=>({...s,name:sheetNames?.get(s.roll)||s.full_name}));
+  if(sheetNames){const missing=[...sheetNames.keys()].filter(roll=>!roster.some(s=>s.roll===roll));if(missing.length)message('#appMessage',`${missing.length} roll number(s) in the sheet are not in the class database; add them to Supabase before they can be picked or marked.`,true);}
+  $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();
   const {data:state}=await supabase.from('class_state').select('active_roll').eq('id',true).maybeSingle();
   current=roster.find(s=>s.roll===state?.active_roll)||null;showCurrent();
 }
@@ -36,12 +64,40 @@ function showCurrent(){
   $('#selection').innerHTML=current?`<div><div class="picked-name">${escapeHTML(current.name)}</div><div class="picked-sub">Roll ${current.roll}${current.completed?' · Completed':''}</div></div>`:'<div class="picked-sub">No student picked yet.</div>';
   $('#doneBtn').disabled=!isTeacher()||busy||!current||current.completed;
 }
+function askForActionAuth(){
+  return new Promise(resolve=>{
+    const modal=$('#actionAuthScreen'),form=$('#actionAuthForm'),password=$('#actionAuthPassword');
+    const finish=value=>{modal.hidden=true;form.removeEventListener('submit',submit);$('#cancelActionAuth').removeEventListener('click',cancel);$('#usePasskeyBtn').removeEventListener('click',passkey);resolve(value);};
+    const cancel=e=>{e?.preventDefault();finish(false);};
+    const submit=async e=>{
+      e.preventDefault();$('#actionAuthMessage').textContent='Checking your password…';
+      const {error}=await supabase.auth.signInWithPassword({email:teacher.email,password:password.value});
+      if(error){$('#actionAuthMessage').textContent='That password didn’t match. Try again or use your passkey.';password.select();return;}
+      password.value='';finish(true);
+    };
+    const passkey=async()=>{
+      const button=$('#usePasskeyBtn');button.disabled=true;$('#actionAuthMessage').textContent='Waiting for your device…';
+      const {error}=await supabase.auth.signInWithPasskey();
+      button.disabled=false;
+      if(error){$('#actionAuthMessage').textContent='Passkey unavailable or not enrolled yet. Use your password, or set up a passkey after signing in.';return;}
+      await sessionQueue;
+      if(isTeacher())finish(true);else $('#actionAuthMessage').textContent='This passkey account does not have teacher access.';
+    };
+    $('#actionAuthMessage').textContent='';password.value='';modal.hidden=false;
+    form.addEventListener('submit',submit);$('#cancelActionAuth').addEventListener('click',cancel);$('#usePasskeyBtn').addEventListener('click',passkey);
+    password.focus();
+  });
+}
 async function verifyTeacherAction(){
   if(!isTeacher()){message('#appMessage','Sign in as the teacher first.',true);return false;}
-  const password=window.prompt('Enter your teacher password to continue:');if(password===null)return false;
-  const {error}=await supabase.auth.signInWithPassword({email:teacher.email,password});
-  if(error){message('#appMessage','Password not accepted. No changes were made.',true);return false;}return true;
+  return askForActionAuth();
 }
+$('#registerPasskeyBtn').onclick=async()=>{
+  const button=$('#registerPasskeyBtn');button.disabled=true;message('#appMessage','Follow the prompt from your device to save a passkey.');
+  const {error}=await supabase.auth.registerPasskey();button.disabled=false;
+  if(error)message('#appMessage',`Could not set up a passkey: ${error.message}`,true);
+  else message('#appMessage','Passkey saved on this device. You can use its fingerprint, face unlock, PIN, or security key when confirming teacher actions.');
+};
 async function pickStudent(){
   if(busy||!await verifyTeacherAction())return;
   const pool=roster.filter(s=>!s.completed);if(!pool.length){current=null;showCurrent();message('#appMessage','All students are marked complete.');return;}

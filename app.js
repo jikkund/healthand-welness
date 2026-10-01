@@ -3,14 +3,12 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL, STUDENT
 
 const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{experimental:{passkey:true}}});
 const $=s=>document.querySelector(s);
-let roster=[],teacher=null,current=null,busy=false,scheduleBusy=false,presentationsByRoll=new Map(),presentationsLoaded=false,rosterFilter='all',scheduleDraft=[],upcomingSchedule=null;
+let roster=[],teacher=null,scheduleBusy=false,presentationsByRoll=new Map(),presentationsLoaded=false,rosterFilter='all',scheduleDraft=[],upcomingSchedule=null;
 const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function message(id,text,error=false){const e=$(id);e.textContent=text;e.style.color=error?'#a9473c':'';}
 function isTeacher(){return teacher?.role==='teacher';}
 function accessUI(){
   $('#teacherLoginBtn').hidden=isTeacher();$('#signOutBtn').hidden=!isTeacher();
-  $('#drawBtn').disabled=!isTeacher()||busy;$('#doneBtn').disabled=!isTeacher()||busy||!current||current.completed;
-  $('#drawHint').textContent=isTeacher()?'Teacher access is active. Confirm with your password or a device passkey for each action.':'Teacher sign-in is required to use the picker or change completion.';
   $('#registerPasskeyBtn').hidden=!isTeacher();
   $('#teacherSchedulePanel').hidden=!isTeacher();
   renderRoster();renderProgress();renderUploadProgress();
@@ -58,8 +56,6 @@ async function loadRoster(){
   roster=(data||[]).map(s=>({...s,name:sheetNames?.get(s.roll)||s.full_name}));
   if(sheetNames){const missing=[...sheetNames.keys()].filter(roll=>!roster.some(s=>s.roll===roll));if(missing.length)message('#appMessage',`${missing.length} roll number(s) in the sheet are not in the class database; add them to Supabase before they can be picked or marked.`,true);}
   $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();renderUploadProgress();
-  const {data:state}=await supabase.from('class_state').select('active_roll').eq('id',true).maybeSingle();
-  current=roster.find(s=>s.roll===state?.active_roll)||null;showCurrent();
   await loadUpcomingSchedule();
 }
 function renderRoster(){
@@ -152,10 +148,6 @@ async function savePresentationSchedule(){
   if(error){$('#scheduleMessage').textContent=`Could not save schedule: ${error.message}`;renderScheduleDraft();return;}
   $('#scheduleMessage').textContent='Saved. Students can now see this presentation lineup.';await loadUpcomingSchedule();
 }
-function showCurrent(){
-  $('#selection').innerHTML=current?`<div><div class="picked-name">${escapeHTML(current.name)}</div><div class="picked-sub">Roll ${current.roll}${current.completed?' · Completed':''}</div></div>`:'<div class="picked-sub">No student picked yet.</div>';
-  $('#doneBtn').disabled=!isTeacher()||busy||!current||current.completed;
-}
 function askForActionAuth(){
   return new Promise(resolve=>{
     const modal=$('#actionAuthScreen'),form=$('#actionAuthForm'),password=$('#actionAuthPassword');
@@ -190,21 +182,12 @@ $('#registerPasskeyBtn').onclick=async()=>{
   if(error)message('#appMessage',`Could not set up a passkey: ${error.message}`,true);
   else message('#appMessage','Passkey saved on this device. You can use its fingerprint, face unlock, PIN, or security key when confirming teacher actions.');
 };
-async function pickStudent(){
-  if(busy||!await verifyTeacherAction())return;
-  const pool=roster.filter(s=>!s.completed);if(!pool.length){current=null;showCurrent();message('#appMessage','All students are marked complete.');return;}
-  busy=true;accessUI();let ticks=0;
-  const timer=setInterval(async()=>{
-    const preview=pool[Math.floor(Math.random()*pool.length)];$('#selection').innerHTML=`<div class="picked-name">${escapeHTML(preview.name)}</div><div class="picked-sub">Roll ${preview.roll}</div>`;
-    if(++ticks>=18){clearInterval(timer);current=pool[Math.floor(Math.random()*pool.length)];const {error}=await supabase.rpc('set_active_presenter',{p_roll:current.roll,p_module:null});if(error)message('#appMessage',`Could not save the pick: ${error.message}`,true);showCurrent();busy=false;accessUI();}
-  },90);
-}
 async function setStatus(roll,completed){
   if(!await verifyTeacherAction())return;
   const s=roster.find(x=>x.roll===roll);if(!s)return;
   const {error}=await supabase.rpc(completed?'mark_student_complete':'reset_student_completion',{p_roll:roll});
   if(error){message('#appMessage',`Could not update status: ${error.message}`,true);return;}
-  s.completed=completed;if(current?.roll===roll&&completed)current=null;showCurrent();accessUI();message('#appMessage',`${s.name} marked ${completed?'complete':'not complete'}.`);
+  s.completed=completed;accessUI();message('#appMessage',`${s.name} marked ${completed?'complete':'not complete'}.`);
 }
 const presentationTips=[
   {title:'Start with a clear opening',body:'Tell your audience what your topic is and why it matters. A simple opening helps everyone follow along.'},
@@ -239,7 +222,7 @@ $('#closePresentation').onclick=()=>{$('#presentationScreen').hidden=true;$('#pr
 $('#teacherLoginBtn').onclick=()=>{$('#authScreen').hidden=false;$('#authPassword').value='';message('#authMessage','');};
 $('#closeTeacherLogin').onclick=()=>$('#authScreen').hidden=true;
 $('#authForm').onsubmit=async e=>{e.preventDefault();message('#authMessage','');const {error}=await supabase.auth.signInWithPassword({email:$('#authEmail').value.trim(),password:$('#authPassword').value});if(error){message('#authMessage',error.message,true);return;}await sessionQueue;if(isTeacher())$('#authScreen').hidden=true;};
-$('#signOutBtn').onclick=()=>supabase.auth.signOut();$('#drawBtn').onclick=pickStudent;$('#doneBtn').onclick=()=>current&&setStatus(current.roll,true);
+$('#signOutBtn').onclick=()=>supabase.auth.signOut();
 $('#scheduleDate').min=localDateISO(new Date());const nextWeek=new Date();nextWeek.setDate(nextWeek.getDate()+7);$('#scheduleDate').value=localDateISO(nextWeek);
 $('#pickFiveBtn').onclick=pickFiveForDate;$('#saveScheduleBtn').onclick=savePresentationSchedule;
 supabase.auth.onAuthStateChange((_event,session)=>queueMicrotask(()=>sessionChanged(session)));

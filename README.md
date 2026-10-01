@@ -1,6 +1,6 @@
 # Wellness Class · Student Progress
 
-Static GitHub Pages app with an updated responsive class dashboard, interactive progress charts, and roster filters. Students can view the roster and completion status without signing in; teacher controls require the teacher account. Supabase remains the source of completion status and authorized actions.
+Static GitHub Pages app with an updated responsive class dashboard, interactive progress charts, roster filters, rotating presentation tips, and a student-ready checklist. Students can view the roster and completion status without signing in; teacher controls require the teacher account. Supabase remains the source of completion status and authorized actions.
 
 ## Optional live roster from Google Sheets
 

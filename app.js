@@ -161,6 +161,15 @@ async function setStatus(roll,completed){
   if(error){message('#appMessage',`Could not update status: ${error.message}`,true);return;}
   s.completed=completed;if(current?.roll===roll&&completed)current=null;showCurrent();accessUI();message('#appMessage',`${s.name} marked ${completed?'complete':'not complete'}.`);
 }
+const presentationTips=[
+  {title:'Start with a clear opening',body:'Tell your audience what your topic is and why it matters. A simple opening helps everyone follow along.'},
+  {title:'Keep each slide focused',body:'Use one main idea per slide. Short phrases and clear images are easier to follow than crowded paragraphs.'},
+  {title:'Speak to your audience',body:'Face the class, look up regularly, and explain the ideas in your own words instead of reading every line.'},
+  {title:'Use a steady pace',body:'Pause between important points. A calm pace gives everyone time to understand what you are sharing.'},
+  {title:'Finish with confidence',body:'Summarise your key message, thank the audience, and invite questions if there is time.'}
+];
+let activeTip=0;
+function showPresentationTip(){const tip=presentationTips[activeTip];$('#tipCounter').textContent=`${activeTip+1} of ${presentationTips.length}`;$('#tipTitle').textContent=tip.title;$('#tipBody').textContent=tip.body;$('#tipDots').innerHTML=presentationTips.map((_,i)=>`<i class="${i===activeTip?'active':''}"></i>`).join('');}
 let sessionQueue=Promise.resolve();
 function sessionChanged(session){
   sessionQueue=sessionQueue.then(async()=>{
@@ -175,6 +184,10 @@ function sessionChanged(session){
   return sessionQueue;
 }
 $('#search').oninput=renderRoster;
+$('#prevTip').onclick=()=>{activeTip=(activeTip+presentationTips.length-1)%presentationTips.length;showPresentationTip();};
+$('#nextTip').onclick=()=>{activeTip=(activeTip+1)%presentationTips.length;showPresentationTip();};
+showPresentationTip();
+document.querySelectorAll('[data-check]').forEach(box=>{const key=`wellness-presentation-check-${box.dataset.check}`;try{box.checked=localStorage.getItem(key)==='true';}catch{}box.addEventListener('change',()=>{try{localStorage.setItem(key,String(box.checked));}catch{}});});
 window.addEventListener('scroll',()=>document.documentElement.style.setProperty('--scroll-y',`${window.scrollY}px`),{passive:true});
 document.querySelectorAll('[data-filter]').forEach(button=>button.onclick=()=>{rosterFilter=button.dataset.filter;document.querySelectorAll('[data-filter]').forEach(chip=>chip.classList.toggle('active',chip===button));renderRoster();});
 $('#closePresentation').onclick=()=>{$('#presentationScreen').hidden=true;$('#presentationFrame').removeAttribute('src');};

@@ -15,3 +15,8 @@ The app falls back to Supabase names while the CSV setting is blank. Never place
 ## Teacher confirmation and passkeys
 
 Teacher actions now use a themed in-app confirmation window. The teacher can confirm with their password or a device passkey (fingerprint, face unlock, device PIN, or security key). To enroll a passkey, sign in as the teacher and choose **Set up passkey**. Supabase Passkeys must first be enabled in the project dashboard under Authentication → Passkeys, with the WebAuthn relying-party origin configured for the deployed site (`https://jikkund.github.io`). Supabase currently labels passkey support experimental; until it is enabled and a passkey is enrolled, use the password option.
+
+
+## Shared five-student schedules
+
+Teachers can choose a date, randomly select five eligible students, and publish the lineup to the public app. Students see the next saved session on the home page. For shared schedules, run the separate presentation_schedule.sql migration in the Supabase SQL Editor once. The SQL grants public read access to saved date and roll numbers; names/topics are resolved from the class roster. Only a signed-in teacher can save or replace a lineup. The selector and database require earlier students with the same topic to be marked complete before follow-up presenters can be scheduled.

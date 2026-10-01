@@ -3,7 +3,7 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL, STUDENT
 
 const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{experimental:{passkey:true}}});
 const $=s=>document.querySelector(s);
-let roster=[],teacher=null,current=null,busy=false,presentationsByRoll=new Map(),presentationsLoaded=false,rosterFilter='all';
+let roster=[],teacher=null,current=null,busy=false,scheduleBusy=false,presentationsByRoll=new Map(),presentationsLoaded=false,rosterFilter='all',scheduleDraft=[],upcomingSchedule=null;
 const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function message(id,text,error=false){const e=$(id);e.textContent=text;e.style.color=error?'#a9473c':'';}
 function isTeacher(){return teacher?.role==='teacher';}
@@ -12,6 +12,7 @@ function accessUI(){
   $('#drawBtn').disabled=!isTeacher()||busy;$('#doneBtn').disabled=!isTeacher()||busy||!current||current.completed;
   $('#drawHint').textContent=isTeacher()?'Teacher access is active. Confirm with your password or a device passkey for each action.':'Teacher sign-in is required to use the picker or change completion.';
   $('#registerPasskeyBtn').hidden=!isTeacher();
+  $('#teacherSchedulePanel').hidden=!isTeacher();
   renderRoster();renderProgress();renderUploadProgress();
 }
 function parseCSV(text){
@@ -49,7 +50,7 @@ async function loadPresentations(){
   return items;
 }
 async function loadRoster(){
-  const {data,error}=await supabase.from('students').select('roll,full_name,completed,module').order('roll');
+  const {data,error}=await supabase.from('students').select('roll,full_name,topic,completed,module').order('roll');
   if(error){message('#appMessage',`Could not load students: ${error.message}`,true);return;}
   let sheetNames=null;
   try{sheetNames=await loadSheetNames();}catch(e){message('#appMessage',`Could not read the linked roster sheet: ${e.message}`,true);}
@@ -59,6 +60,7 @@ async function loadRoster(){
   $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();renderUploadProgress();
   const {data:state}=await supabase.from('class_state').select('active_roll').eq('id',true).maybeSingle();
   current=roster.find(s=>s.roll===state?.active_roll)||null;showCurrent();
+  await loadUpcomingSchedule();
 }
 function renderRoster(){
   const q=$('#search').value.trim().toLowerCase(),list=roster.filter(s=>{const uploaded=presentationsByRoll.has(s.roll);const matches=s.name.toLowerCase().includes(q)||String(s.roll).includes(q);return matches&&(rosterFilter==='all'||(rosterFilter==='pending'&&!uploaded)||(rosterFilter==='uploaded'&&uploaded)||(rosterFilter==='completed'&&s.completed));});
@@ -106,6 +108,49 @@ function renderUploadProgress(){
   $('#uploadSummary').textContent=presentationsLoaded?`${uploaded.length} of ${roster.length} students have a presentation link`:'Could not load the presentation sheet';
   $('#uploadMissingCount').textContent=presentationsLoaded?`${pending.length} still to upload`:'Waiting for sheet access';
   $('#uploadMissingList').innerHTML=!presentationsLoaded?'<div class="count">Check that the Student Presentations tab is published for anyone with the link.</div>':pending.map(s=>`<div class="pending-item">○ &nbsp; ${escapeHTML(s.name)} <span class="count">· Roll ${s.roll}</span></div>`).join('')||'<div class="count">Everyone has added a presentation link.</div>';
+}
+function localDateISO(date){const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');return `${y}-${m}-${d}`;}
+function formatScheduleDate(value){if(!value)return '';return new Date(`${value}T00:00:00`).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});}
+function renderScheduleDraft(spinning=''){
+  $('#scheduleSpinName').textContent=spinning;
+  $('#scheduleDraftList').innerHTML=Array.from({length:5},(_,i)=>{const s=scheduleDraft[i];return `<div class="schedule-person ${s?'selected':''}"><span class="schedule-number">${i+1}</span><div><strong>${s?escapeHTML(s.name):'Presenter slot'}</strong><span>${s?`Roll ${s.roll} · ${escapeHTML(presentationsByRoll.get(s.roll)?.topic||s.topic||'Presentation topic')}`:'Waiting to be picked'}</span></div></div>`;}).join('');
+  $('#saveScheduleBtn').disabled=scheduleBusy||scheduleDraft.length!==5;
+}
+async function loadUpcomingSchedule(){
+  const {data,error}=await supabase.from('presentation_schedules').select('schedule_date,rolls,custom_message').gte('schedule_date',localDateISO(new Date())).order('schedule_date').limit(1).maybeSingle();
+  upcomingSchedule=error||!data?null:data;
+  const panel=$('#upcomingScheduleCard');panel.hidden=false;
+  if(error){$('#upcomingScheduleDate').textContent='Schedule setup needed';$('#upcomingScheduleList').innerHTML='<div class="schedule-empty">The teacher can enable shared schedules by applying the presentation schedule setup in Supabase.</div>';return;}
+  if(!data){$('#upcomingScheduleDate').textContent='No session scheduled yet';$('#upcomingScheduleList').innerHTML='<div class="schedule-empty">Your teacher will post next week’s presenters here.</div>';$('#teacherScheduleMessage').hidden=true;$('#scheduleCustomMessage').value='';return;}
+  $('#upcomingScheduleDate').textContent=formatScheduleDate(data.schedule_date);if(document.activeElement!==$('#scheduleCustomMessage'))$('#scheduleCustomMessage').value=data.custom_message||'';const studentMessage=$('#teacherScheduleMessage');studentMessage.textContent=data.custom_message||'';studentMessage.hidden=!data.custom_message;
+  $('#upcomingScheduleList').innerHTML=(data.rolls||[]).map((roll,i)=>{const s=roster.find(x=>x.roll===roll);return s?`<div class="upcoming-person"><span class="schedule-number">${i+1}</span><div><strong>${escapeHTML(s.name)}</strong><span>Roll ${s.roll} · ${escapeHTML(presentationsByRoll.get(roll)?.topic||s.topic||'Presentation')}</span></div>${s.completed?'<span class="badge done">Done</span>':''}</div>`:'';}).join('')||'<div class="schedule-empty">No presenters are listed for this date.</div>';
+}
+async function pickFiveForDate(){
+  if(scheduleBusy||!await verifyTeacherAction())return;
+  const date=$('#scheduleDate').value,today=localDateISO(new Date());
+  if(!date||date<today){$('#scheduleMessage').textContent='Choose today or a future presentation date.';return;}
+  const available=roster.filter(s=>!s.completed),chosen=[];
+  scheduleDraft=[];scheduleBusy=true;$('#pickFiveBtn').disabled=true;$('#scheduleMessage').textContent='Selecting five presenters in topic order…';renderScheduleDraft();
+  while(chosen.length<5){
+    const eligible=available.filter(candidate=>!roster.some(prior=>prior.roll<candidate.roll&&prior.topic===candidate.topic&&!prior.completed));
+    if(!eligible.length){break;}
+    for(let tick=0;tick<10;tick++){
+      const preview=eligible[Math.floor(Math.random()*eligible.length)];renderScheduleDraft(`Choosing ${chosen.length+1} of 5 · ${preview.name}`);
+      await new Promise(resolve=>setTimeout(resolve,65));
+    }
+    const selected=eligible[Math.floor(Math.random()*eligible.length)];chosen.push(selected);available.splice(available.findIndex(s=>s.roll===selected.roll),1);scheduleDraft=[...chosen];renderScheduleDraft();
+  }
+  scheduleBusy=false;$('#pickFiveBtn').disabled=false;
+  $('#scheduleMessage').textContent=chosen.length===5?'Five presenters selected. Review the lineup, then save it for students.':`Only ${chosen.length} eligible student(s) remain. Complete earlier presentations before scheduling five.`;
+  renderScheduleDraft();
+}
+async function savePresentationSchedule(){
+  if(scheduleDraft.length!==5||!await verifyTeacherAction())return;
+  const date=$('#scheduleDate').value;
+  $('#saveScheduleBtn').disabled=true;$('#scheduleMessage').textContent='Saving the lineup for students…';
+  const {error}=await supabase.rpc('save_presentation_schedule',{p_schedule_date:date,p_rolls:scheduleDraft.map(s=>s.roll),p_custom_message:$('#scheduleCustomMessage').value.trim()});
+  if(error){$('#scheduleMessage').textContent=`Could not save schedule: ${error.message}`;renderScheduleDraft();return;}
+  $('#scheduleMessage').textContent='Saved. Students can now see this presentation lineup.';await loadUpcomingSchedule();
 }
 function showCurrent(){
   $('#selection').innerHTML=current?`<div><div class="picked-name">${escapeHTML(current.name)}</div><div class="picked-sub">Roll ${current.roll}${current.completed?' · Completed':''}</div></div>`:'<div class="picked-sub">No student picked yet.</div>';
@@ -195,6 +240,8 @@ $('#teacherLoginBtn').onclick=()=>{$('#authScreen').hidden=false;$('#authPasswor
 $('#closeTeacherLogin').onclick=()=>$('#authScreen').hidden=true;
 $('#authForm').onsubmit=async e=>{e.preventDefault();message('#authMessage','');const {error}=await supabase.auth.signInWithPassword({email:$('#authEmail').value.trim(),password:$('#authPassword').value});if(error){message('#authMessage',error.message,true);return;}await sessionQueue;if(isTeacher())$('#authScreen').hidden=true;};
 $('#signOutBtn').onclick=()=>supabase.auth.signOut();$('#drawBtn').onclick=pickStudent;$('#doneBtn').onclick=()=>current&&setStatus(current.roll,true);
+$('#scheduleDate').min=localDateISO(new Date());const nextWeek=new Date();nextWeek.setDate(nextWeek.getDate()+7);$('#scheduleDate').value=localDateISO(nextWeek);
+$('#pickFiveBtn').onclick=pickFiveForDate;$('#saveScheduleBtn').onclick=savePresentationSchedule;
 supabase.auth.onAuthStateChange((_event,session)=>queueMicrotask(()=>sessionChanged(session)));
 supabase.auth.getSession().then(({data})=>sessionChanged(data.session));
 loadRoster();setInterval(loadRoster,10000);

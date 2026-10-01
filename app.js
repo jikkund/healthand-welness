@@ -1,9 +1,9 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL } from './config.js';
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL, STUDENT_PRESENTATIONS_CSV_URL } from './config.js';
 
 const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{experimental:{passkey:true}}});
 const $=s=>document.querySelector(s);
-let roster=[],teacher=null,current=null,busy=false;
+let roster=[],teacher=null,current=null,busy=false,presentationsByRoll=new Map();
 const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function message(id,text,error=false){const e=$(id);e.textContent=text;e.style.color=error?'#a9473c':'';}
 function isTeacher(){return teacher?.role==='teacher';}
@@ -37,11 +37,23 @@ async function loadSheetNames(){
   if(!names.size)throw new Error('The published roster has no rows with Roll No and Student Name.');
   return names;
 }
+async function loadPresentations(){
+  const response=await fetch(STUDENT_PRESENTATIONS_CSV_URL,{cache:'no-store'});
+  if(!response.ok)throw new Error(`Presentation links returned HTTP ${response.status}`);
+  const rows=parseCSV(await response.text()),items=new Map();
+  for(const cells of rows){
+    const roll=Number.parseInt(cells[0],10),topic=(cells[2]||'').trim(),raw=(cells[3]||'').trim();
+    if(!Number.isInteger(roll)||!raw)continue;
+    try{const url=new URL(raw);if(url.protocol==='https:')items.set(roll,{topic,url:url.href});}catch{}
+  }
+  return items;
+}
 async function loadRoster(){
   const {data,error}=await supabase.from('students').select('roll,full_name,completed,module').order('roll');
   if(error){message('#appMessage',`Could not load students: ${error.message}`,true);return;}
   let sheetNames=null;
   try{sheetNames=await loadSheetNames();}catch(e){message('#appMessage',`Could not read the linked roster sheet: ${e.message}`,true);}
+  try{presentationsByRoll=await loadPresentations();}catch(e){presentationsByRoll=new Map();message('#appMessage',`Could not load presentation previews: ${e.message}`,true);}
   roster=(data||[]).map(s=>({...s,name:sheetNames?.get(s.roll)||s.full_name}));
   if(sheetNames){const missing=[...sheetNames.keys()].filter(roll=>!roster.some(s=>s.roll===roll));if(missing.length)message('#appMessage',`${missing.length} roll number(s) in the sheet are not in the class database; add them to Supabase before they can be picked or marked.`,true);}
   $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();
@@ -50,8 +62,30 @@ async function loadRoster(){
 }
 function renderRoster(){
   const q=$('#search').value.trim().toLowerCase(),list=roster.filter(s=>s.name.toLowerCase().includes(q)||String(s.roll).includes(q));
-  $('#studentList').innerHTML=list.map(s=>`<div class="row"><div class="name">${escapeHTML(s.name)}<div class="roll">Roll ${s.roll}</div></div><span class="badge ${s.completed?'done':''}">${s.completed?'Completed':'Not completed'}</span>${isTeacher()?`<button class="teacher status-toggle" data-roll="${s.roll}" aria-label="Change completion for ${escapeHTML(s.name)}">${s.completed?'Undo':'Mark done'}</button>`:''}</div>`).join('')||'<div class="count">No students found.</div>';
+  $('#studentList').innerHTML=list.map(s=>{const presentation=presentationsByRoll.get(s.roll);return `<div class="row"><div class="name">${escapeHTML(s.name)}<div class="roll">Roll ${s.roll}${presentation?.topic?` · ${escapeHTML(presentation.topic)}`:''}</div></div>${presentation?`<button class="preview-button" data-presentation-roll="${s.roll}" aria-label="Preview ${escapeHTML(s.name)}’s presentation">Preview</button>`:'<span class="no-preview">No presentation link</span>'}<span class="badge ${s.completed?'done':''}">${s.completed?'Completed':'Not completed'}</span>${isTeacher()?`<button class="teacher status-toggle" data-roll="${s.roll}" aria-label="Change completion for ${escapeHTML(s.name)}">${s.completed?'Undo':'Mark done'}</button>`:''}</div>`;}).join('')||'<div class="count">No students found.</div>';
   document.querySelectorAll('.status-toggle').forEach(b=>b.onclick=()=>setStatus(+b.dataset.roll,!roster.find(s=>s.roll===+b.dataset.roll)?.completed));
+  document.querySelectorAll('.preview-button').forEach(b=>b.onclick=()=>previewStudentPresentation(+b.dataset.presentationRoll));
+}
+function presentationEmbedUrl(raw){
+  const url=new URL(raw);if(url.protocol!=='https:')return null;
+  const slides=url.pathname.match(/\/presentation\/d\/([\w-]+)/);
+  if(slides)return `https://docs.google.com/presentation/d/${slides[1]}/embed?start=false&loop=false&delayms=3000`;
+  const drive=url.pathname.match(/\/file\/d\/([\w-]+)/);
+  if(drive)return `https://drive.google.com/file/d/${drive[1]}/preview`;
+  if(url.hostname==='canva.com'||url.hostname.endsWith('.canva.com')){url.searchParams.set('embed','');return url.href;}
+  if(url.pathname.toLowerCase().endsWith('.pdf'))return url.href;
+  if(url.pathname.toLowerCase().endsWith('.pptx'))return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url.href)}`;
+  return null;
+}
+function previewStudentPresentation(roll){
+  const student=roster.find(s=>s.roll===roll),presentation=presentationsByRoll.get(roll);if(!student||!presentation)return;
+  $('#presentationTitle').textContent=presentation.topic||`${student.name} · Roll ${roll}`;
+  $('#presentationStudent').textContent=`${student.name} · Roll ${roll}`;
+  $('#presentationExternal').href=presentation.url;
+  const embed=presentationEmbedUrl(presentation.url),frame=$('#presentationFrame'),fallback=$('#presentationFallback');
+  frame.hidden=!embed;fallback.hidden=!!embed;
+  if(embed)frame.src=embed;else frame.removeAttribute('src');
+  $('#presentationScreen').hidden=false;
 }
 function renderProgress(){
   const done=roster.filter(s=>s.completed),pct=roster.length?Math.round(done.length/roster.length*100):0;
@@ -128,6 +162,7 @@ function sessionChanged(session){
   return sessionQueue;
 }
 $('#search').oninput=renderRoster;
+$('#closePresentation').onclick=()=>{$('#presentationScreen').hidden=true;$('#presentationFrame').removeAttribute('src');};
 $('#teacherLoginBtn').onclick=()=>{$('#authScreen').hidden=false;$('#authPassword').value='';message('#authMessage','');};
 $('#closeTeacherLogin').onclick=()=>$('#authScreen').hidden=true;
 $('#authForm').onsubmit=async e=>{e.preventDefault();message('#authMessage','');const {error}=await supabase.auth.signInWithPassword({email:$('#authEmail').value.trim(),password:$('#authPassword').value});if(error){message('#authMessage',error.message,true);return;}await sessionQueue;if(isTeacher())$('#authScreen').hidden=true;};

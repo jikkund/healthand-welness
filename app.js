@@ -3,15 +3,23 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, STUDENT_ROSTER_CSV_URL, STUDENT
 
 const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{experimental:{passkey:true}}});
 const $=s=>document.querySelector(s);
-let roster=[],teacher=null,scheduleBusy=false,presentationsByRoll=new Map(),presentationsLoaded=false,rosterFilter='all',scheduleDraft=[],upcomingSchedule=null;
+let roster=[],teacher=null,scheduleBusy=false,presentationsByRoll=new Map(),presentationsLoaded=false,rosterFilter='all',scheduleDraft=[],upcomingSchedule=null,assessmentByRoll=new Map(),assessmentSelectedRoll=null,assessmentDirty=false;
+const rubricCriteria=[
+  {key:'subject_knowledge',title:'Subject Knowledge & Understanding',max:5,levels:['No meaningful understanding demonstrated','Poor understanding','Basic understanding','Good understanding but limited depth','Very good understanding with minor gaps','Excellent understanding; accurate, detailed and clear explanation']},
+  {key:'digital_tools',title:'Use of Modern Digital, AI & Interactive Tools',max:4,levels:['No meaningful use','Minimal or inappropriate use','Basic use with limited contribution','Good use of relevant tools that clearly improves the presentation','Excellent and meaningful use of appropriate tools; output is evaluated and explained']},
+  {key:'presentation_slides',title:'Presentation Slides & Visual Communication',max:4,levels:['Not satisfactory','Poor visual presentation','Acceptable but basic design','Good design with minor issues','Excellent professional presentation and visual communication']},
+  {key:'innovation_creativity',title:'Innovation & Creativity',max:3,levels:['No innovation demonstrated','Limited creativity','Good creative element','Highly innovative approach with meaningful application or demonstration']},
+  {key:'communication_skills',title:'Communication & Presentation Skills',max:2,levels:['Poor','Needs improvement','Excellent']},
+  {key:'qa_critical_thinking',title:'Q&A & Critical Thinking',max:2,levels:['Unable to answer meaningfully','Partially answers / limited reasoning','Answers confidently with reasoning and demonstrates deeper understanding']}
+];
 const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function message(id,text,error=false){const e=$(id);e.textContent=text;e.style.color=error?'#a9473c':'';}
 function isTeacher(){return teacher?.role==='teacher';}
 function accessUI(){
   $('#teacherLoginBtn').hidden=isTeacher();$('#signOutBtn').hidden=!isTeacher();
   $('#registerPasskeyBtn').hidden=!isTeacher();
-  $('#teacherSchedulePanel').hidden=!isTeacher();$('#saveScheduleDateBtn').disabled=!isTeacher()||!upcomingSchedule;
-  renderRoster();renderProgress();renderUploadProgress();
+  $('#teacherSchedulePanel').hidden=!isTeacher();$('#saveScheduleDateBtn').disabled=!isTeacher()||!upcomingSchedule;$('#teacherMarksPanel').hidden=!isTeacher();
+  renderRoster();renderProgress();renderUploadProgress();renderAssessmentRoster();
 }
 function parseCSV(text){
   const rows=[];let row=[],cell='',quoted=false;
@@ -55,7 +63,7 @@ async function loadRoster(){
   try{presentationsByRoll=await loadPresentations();presentationsLoaded=true;}catch(e){presentationsByRoll=new Map();presentationsLoaded=false;message('#appMessage',`Could not load presentation links: ${e.message}`,true);}
   roster=(data||[]).map(s=>({...s,name:sheetNames?.get(s.roll)||s.full_name}));
   if(sheetNames){const missing=[...sheetNames.keys()].filter(roll=>!roster.some(s=>s.roll===roll));if(missing.length)message('#appMessage',`${missing.length} roll number(s) in the sheet are not in the class database; add them to Supabase before they can be picked or marked.`,true);}
-  $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();renderUploadProgress();
+  $('#rosterCount').textContent=`${roster.length} students`;renderRoster();renderProgress();renderUploadProgress();renderAssessmentRoster();
   await loadUpcomingSchedule();
 }
 function renderRoster(){
@@ -64,6 +72,55 @@ function renderRoster(){
   document.querySelectorAll('.status-toggle').forEach(b=>b.onclick=()=>setStatus(+b.dataset.roll,!roster.find(s=>s.roll===+b.dataset.roll)?.completed));
   document.querySelectorAll('.preview-button').forEach(b=>b.onclick=()=>previewStudentPresentation(+b.dataset.presentationRoll));
 }
+function assessmentTotal(row){return rubricCriteria.reduce((sum,c)=>sum+(Number(row?.[c.key])||0),0);}
+function renderAssessmentRoster(){
+  const list=$('#assessmentStudentList');if(!list)return;
+  const query=$('#assessmentSearch').value.trim().toLowerCase();
+  const filtered=roster.filter(student=>student.name.toLowerCase().includes(query)||String(student.roll).includes(query));
+  $('#assessmentRosterCount').textContent=roster.length+' students';
+  list.innerHTML=filtered.map(student=>{const scores=assessmentByRoll.get(student.roll),total=scores?assessmentTotal(scores):null;return '<button type="button" class="assessment-student '+(assessmentSelectedRoll===student.roll?'active':'')+'" data-assessment-roll="'+student.roll+'"><span class="assessment-student-name">'+escapeHTML(student.name)+' <small>· Roll '+student.roll+'</small></span><span class="assessment-student-score">'+(total===null?'Not marked':total+'/20')+'</span></button>';}).join('')||'<div class="assessment-empty">No students match that search.</div>';
+  list.querySelectorAll('[data-assessment-roll]').forEach(button=>button.onclick=()=>selectAssessmentStudent(Number(button.dataset.assessmentRoll)));
+}
+function renderAssessmentForm(){
+  const student=roster.find(item=>item.roll===assessmentSelectedRoll),saved=assessmentByRoll.get(assessmentSelectedRoll)||{};
+  $('#assessmentSelectedName').textContent=student?.name||'Select a student from the list';
+  $('#assessmentSelectedRoll').textContent=student?'Roll '+student.roll+' · scores are saved privately for teachers':'Choose a name on the right to begin';
+  $('#assessmentCriteriaList').innerHTML=student?rubricCriteria.map(c=>'<label class="assessment-criterion"><span class="assessment-criterion-head"><strong>'+escapeHTML(c.title)+'</strong><em>0–'+c.max+' marks</em></span><select class="assessment-score" data-assessment-key="'+c.key+'" aria-label="'+escapeHTML(c.title)+' score for '+escapeHTML(student.name)+'"><option value="">Choose score</option>'+c.levels.map((level,score)=>'<option value="'+score+'" '+(Number(saved[c.key])===score&&saved[c.key]!==undefined?'selected':'')+'>'+score+' — '+escapeHTML(level)+'</option>').join('')+'</select><small class="assessment-descriptor" data-assessment-description="'+c.key+'">'+(saved[c.key]===undefined?'Select a score to see its rubric description.':escapeHTML(c.levels[Number(saved[c.key])]))+'</small></label>').join(''):'<div class="assessment-empty">Select a student to open the rubric.</div>';
+  $('#assessmentCriteriaList').querySelectorAll('[data-assessment-key]').forEach(select=>select.onchange=()=>{const criterion=rubricCriteria.find(c=>c.key===select.dataset.assessmentKey);document.querySelector('[data-assessment-description="'+criterion.key+'"]').textContent=select.value===''?'Select a score to see its rubric description.':criterion.levels[Number(select.value)];assessmentDirty=true;updateAssessmentTotal();});
+  assessmentDirty=false;updateAssessmentTotal();
+}
+function updateAssessmentTotal(){
+  const selects=Array.from($('#assessmentCriteriaList').querySelectorAll('[data-assessment-key]')),values=selects.map(select=>select.value),sum=values.reduce((total,value)=>total+(value===''?0:Number(value)),0),complete=selects.length===rubricCriteria.length&&values.every(value=>value!=='');
+  $('#assessmentTotal').innerHTML=sum+' <small>/ 20</small>';$('#saveAssessmentBtn').disabled=!assessmentSelectedRoll||!complete||!assessmentDirty;$('#resetAssessmentBtn').disabled=!assessmentSelectedRoll||!assessmentDirty;
+}
+function selectAssessmentStudent(roll){
+  if(assessmentDirty){$('#assessmentMessage').textContent='Save or reset the current marks before switching students.';return;}
+  assessmentSelectedRoll=roll;$('#assessmentMessage').textContent='Enter a score for each rubric criterion, then save.';renderAssessmentForm();renderAssessmentRoster();
+}
+async function loadAssessmentMarks(){
+  const {data,error}=await supabase.from('student_assessments').select('roll,subject_knowledge,digital_tools,presentation_slides,innovation_creativity,communication_skills,qa_critical_thinking');
+  if(error){assessmentByRoll=new Map();$('#assessmentMessage').textContent='Could not load marksheet: '+error.message;return;}
+  assessmentByRoll=new Map((data||[]).map(row=>[row.roll,row]));renderAssessmentRoster();
+}
+async function syncAssessmentBackup(roll){
+  const retry=$('#retryAssessmentBackupBtn');if(retry)retry.hidden=true;
+  $('#assessmentMessage').textContent='Marks are saved in the class database. Updating the Google Sheets backup…';
+  const {data:backup,error}=await supabase.functions.invoke('backup-assessment',{body:{roll}});
+  if(error||!backup?.ok){const detail=error?.message||backup?.error||'Backup function is not configured yet.';$('#assessmentMessage').textContent='Marks are safely saved in the app, but the Google Sheets backup did not update: '+detail;if(retry){retry.dataset.roll=String(roll);retry.hidden=false;}return false;}
+  $('#assessmentMessage').textContent='Marks saved and Google Sheets backup updated.';return true;
+}
+async function retryAssessmentBackup(){
+  const retry=$('#retryAssessmentBackupBtn'),roll=Number(retry?.dataset.roll);if(!roll||!await verifyTeacherAction())return;await syncAssessmentBackup(roll);
+}
+async function saveAssessment(){
+  if(!assessmentSelectedRoll||!await verifyTeacherAction())return;
+  const values={};for(const criterion of rubricCriteria){const node=document.querySelector('[data-assessment-key="'+criterion.key+'"]'),value=node?.value;if(value==='')return;values[criterion.key]=Number(value);}
+  $('#saveAssessmentBtn').disabled=true;$('#assessmentMessage').textContent='Saving marks…';
+  const {error}=await supabase.rpc('save_student_assessment',{p_roll:assessmentSelectedRoll,p_subject_knowledge:values.subject_knowledge,p_digital_tools:values.digital_tools,p_presentation_slides:values.presentation_slides,p_innovation_creativity:values.innovation_creativity,p_communication_skills:values.communication_skills,p_qa_critical_thinking:values.qa_critical_thinking});
+  if(error){$('#assessmentMessage').textContent='Could not save marks: '+error.message;updateAssessmentTotal();return;}
+  const savedRoll=assessmentSelectedRoll;assessmentByRoll.set(savedRoll,Object.assign({roll:savedRoll},values));assessmentDirty=false;renderAssessmentForm();renderAssessmentRoster();await syncAssessmentBackup(savedRoll);
+}
+function resetAssessmentDraft(){if(!assessmentSelectedRoll)return;assessmentDirty=false;$('#assessmentMessage').textContent='Changes reset to the last saved scores.';renderAssessmentForm();}
 function presentationEmbedUrl(raw){
   const url=new URL(raw);if(url.protocol!=='https:')return null;
   const slides=url.pathname.match(/\/presentation\/d\/([\w-]+)/);
@@ -215,14 +272,14 @@ function sessionChanged(session){
     teacher=null;
     if(session?.user){
       const {data,error}=await supabase.from('profiles').select('id,email,role').eq('id',session.user.id).maybeSingle();
-      if(!error&&data?.role==='teacher')teacher={...data,email:session.user.email};
+      if(!error&&data?.role==='teacher'){teacher={...data,email:session.user.email};await loadAssessmentMarks();}
       else{await supabase.auth.signOut();$('#authScreen').hidden=false;message('#authMessage','This account does not have teacher access.',true);}
     }
     accessUI();
   });
   return sessionQueue;
 }
-$('#search').oninput=renderRoster;
+$('#search').oninput=renderRoster;$('#assessmentSearch').oninput=renderAssessmentRoster;$('#saveAssessmentBtn').onclick=saveAssessment;$('#resetAssessmentBtn').onclick=resetAssessmentDraft;$('#retryAssessmentBackupBtn').onclick=retryAssessmentBackup;
 $('#prevTip').onclick=()=>{activeTip=(activeTip+presentationTips.length-1)%presentationTips.length;showPresentationTip();};
 $('#nextTip').onclick=()=>{activeTip=(activeTip+1)%presentationTips.length;showPresentationTip();};
 showPresentationTip();
@@ -239,9 +296,3 @@ $('#pickFiveBtn').onclick=pickFiveForDate;$('#saveScheduleBtn').onclick=savePres
 supabase.auth.onAuthStateChange((_event,session)=>queueMicrotask(()=>sessionChanged(session)));
 supabase.auth.getSession().then(({data})=>sessionChanged(data.session));
 loadRoster();setInterval(loadRoster,10000);
-async function syncAssessmentBackup(roll){
-  const retry=document.querySelector('#retryAssessmentBackupBtn');if(retry)retry.hidden=true;
-  const {data:backup,error}=await supabase.functions.invoke('backup-assessment',{body:{roll}});
-  if(error||!backup?.ok){const detail=error?.message||backup?.error||'Google Sheets backup did not update.';const status=document.querySelector('#assessmentMessage');if(status)status.textContent='Marks are saved in the class database, but the Google Sheets backup did not update: '+detail;if(retry){retry.dataset.roll=String(roll);retry.hidden=false;}return false;}
-  const status=document.querySelector('#assessmentMessage');if(status)status.textContent='Marks saved and Google Sheets backup updated.';return true;
-}

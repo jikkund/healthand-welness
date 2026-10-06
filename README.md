@@ -12,6 +12,10 @@ The dashboard includes interactive upload and completion charts, roster summary 
 
 The app falls back to Supabase names while the CSV setting is blank. Never place a Supabase secret/service-role key in this folder.
 
+## Teacher marksheet and Google Sheets backup
+
+Teachers can score each student with the official 20-mark rubric. Scores are stored in Supabase and can also be copied to the private `Presentation Marks Backup` tab in the teacher's Google Sheet. For the one-time Apps Script and Supabase Edge Function setup, use the private setup guide outside this public upload folder. Never publish the backup tab or put its shared secret in this website.
+
 ## Teacher confirmation and passkeys
 
 Teacher actions now use a themed in-app confirmation window. The teacher can confirm with their password or a device passkey (fingerprint, face unlock, device PIN, or security key). To enroll a passkey, sign in as the teacher and choose **Set up passkey**. Supabase Passkeys must first be enabled in the project dashboard under Authentication → Passkeys, with the WebAuthn relying-party origin configured for the deployed site (`https://jikkund.github.io`). Supabase currently labels passkey support experimental; until it is enabled and a passkey is enrolled, use the password option.

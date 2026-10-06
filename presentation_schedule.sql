@@ -34,3 +34,19 @@ begin
 end; $$;
 revoke all on function public.save_presentation_schedule(date, integer[], text) from public, anon;
 grant execute on function public.save_presentation_schedule(date, integer[], text) to authenticated;
+create or replace function public.update_presentation_schedule_date(p_current_date date, p_new_date date)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_class_teacher() then raise exception 'Teacher permission required'; end if;
+  if p_current_date is null or p_new_date is null or p_new_date < current_date then
+    raise exception 'Choose today or a future presentation date';
+  end if;
+  if exists (select 1 from public.presentation_schedules where schedule_date=p_new_date and schedule_date<>p_current_date) then
+    raise exception 'A presentation lineup already exists for that date';
+  end if;
+  update public.presentation_schedules set schedule_date=p_new_date, updated_at=now()
+  where schedule_date=p_current_date;
+  if not found then raise exception 'The saved presentation lineup could not be found'; end if;
+end; $$;
+revoke all on function public.update_presentation_schedule_date(date, date) from public, anon;
+grant execute on function public.update_presentation_schedule_date(date, date) to authenticated;

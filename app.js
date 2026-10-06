@@ -10,7 +10,7 @@ function isTeacher(){return teacher?.role==='teacher';}
 function accessUI(){
   $('#teacherLoginBtn').hidden=isTeacher();$('#signOutBtn').hidden=!isTeacher();
   $('#registerPasskeyBtn').hidden=!isTeacher();
-  $('#teacherSchedulePanel').hidden=!isTeacher();
+  $('#teacherSchedulePanel').hidden=!isTeacher();$('#saveScheduleDateBtn').disabled=!isTeacher()||!upcomingSchedule;
   renderRoster();renderProgress();renderUploadProgress();
 }
 function parseCSV(text){
@@ -110,15 +110,16 @@ function formatScheduleDate(value){if(!value)return '';return new Date(`${value}
 function renderScheduleDraft(spinning=''){
   $('#scheduleSpinName').textContent=spinning;
   $('#scheduleDraftList').innerHTML=Array.from({length:5},(_,i)=>{const s=scheduleDraft[i];return `<div class="schedule-person ${s?'selected':''}"><span class="schedule-number">${i+1}</span><div><strong>${s?escapeHTML(s.name):'Presenter slot'}</strong><span>${s?`Roll ${s.roll} · ${escapeHTML(presentationsByRoll.get(s.roll)?.topic||s.topic||'Presentation topic')}`:'Waiting to be picked'}</span></div></div>`;}).join('');
-  $('#saveScheduleBtn').disabled=scheduleBusy||scheduleDraft.length!==5;
+  $('#saveScheduleBtn').disabled=scheduleBusy||scheduleDraft.length!==5;$('#saveScheduleDateBtn').disabled=scheduleBusy||!upcomingSchedule;
 }
 async function loadUpcomingSchedule(){
   const {data,error}=await supabase.from('presentation_schedules').select('schedule_date,rolls,custom_message').gte('schedule_date',localDateISO(new Date())).order('schedule_date').limit(1).maybeSingle();
   upcomingSchedule=error||!data?null:data;
+  $('#saveScheduleDateBtn').disabled=!isTeacher()||!upcomingSchedule;
   const panel=$('#upcomingScheduleCard');panel.hidden=false;
   if(error){$('#upcomingScheduleDate').textContent='Schedule setup needed';$('#upcomingScheduleList').innerHTML='<div class="schedule-empty">The teacher can enable shared schedules by applying the presentation schedule setup in Supabase.</div>';return;}
   if(!data){$('#upcomingScheduleDate').textContent='No session scheduled yet';$('#upcomingScheduleList').innerHTML='<div class="schedule-empty">Your teacher will post next week’s presenters here.</div>';$('#teacherScheduleMessage').hidden=true;$('#scheduleCustomMessage').value='';return;}
-  $('#upcomingScheduleDate').textContent=formatScheduleDate(data.schedule_date);if(document.activeElement!==$('#scheduleCustomMessage'))$('#scheduleCustomMessage').value=data.custom_message||'';const studentMessage=$('#teacherScheduleMessage');studentMessage.textContent=data.custom_message||'';studentMessage.hidden=!data.custom_message;
+  $('#upcomingScheduleDate').textContent=formatScheduleDate(data.schedule_date);if(document.activeElement!==$('#scheduleCustomMessage'))$('#scheduleCustomMessage').value=data.custom_message||'';if(document.activeElement!==$('#scheduleDate'))$('#scheduleDate').value=data.schedule_date;const studentMessage=$('#teacherScheduleMessage');studentMessage.textContent=data.custom_message||'';studentMessage.hidden=!data.custom_message;
   $('#upcomingScheduleList').innerHTML=(data.rolls||[]).map((roll,i)=>{const s=roster.find(x=>x.roll===roll);return s?`<div class="upcoming-person"><span class="schedule-number">${i+1}</span><div><strong>${escapeHTML(s.name)}</strong><span>Roll ${s.roll} · ${escapeHTML(presentationsByRoll.get(roll)?.topic||s.topic||'Presentation')}</span></div>${s.completed?'<span class="badge done">Done</span>':''}</div>`:'';}).join('')||'<div class="schedule-empty">No presenters are listed for this date.</div>';
 }
 async function pickFiveForDate(){
@@ -147,6 +148,16 @@ async function savePresentationSchedule(){
   const {error}=await supabase.rpc('save_presentation_schedule',{p_schedule_date:date,p_rolls:scheduleDraft.map(s=>s.roll),p_custom_message:$('#scheduleCustomMessage').value.trim()});
   if(error){$('#scheduleMessage').textContent=`Could not save schedule: ${error.message}`;renderScheduleDraft();return;}
   $('#scheduleMessage').textContent='Saved. Students can now see this presentation lineup.';await loadUpcomingSchedule();
+}
+async function saveScheduleDateOnly(){
+  if(!upcomingSchedule){$('#scheduleMessage').textContent='Pick and save the five presenters first.';return;}
+  if(!await verifyTeacherAction())return;
+  const newDate=$('#scheduleDate').value,today=localDateISO(new Date());
+  if(!newDate||newDate<today){$('#scheduleMessage').textContent='Choose today or a future presentation date.';return;}
+  $('#saveScheduleDateBtn').disabled=true;$('#scheduleMessage').textContent='Updating the presentation date…';
+  const {error}=await supabase.rpc('update_presentation_schedule_date',{p_current_date:upcomingSchedule.schedule_date,p_new_date:newDate});
+  if(error){$('#scheduleMessage').textContent='Could not update date: '+error.message;renderScheduleDraft();return;}
+  $('#scheduleMessage').textContent='Presentation date updated. The presenter order is unchanged.';await loadUpcomingSchedule();renderScheduleDraft();
 }
 function askForActionAuth(){
   return new Promise(resolve=>{
@@ -224,7 +235,7 @@ $('#closeTeacherLogin').onclick=()=>$('#authScreen').hidden=true;
 $('#authForm').onsubmit=async e=>{e.preventDefault();message('#authMessage','');const {error}=await supabase.auth.signInWithPassword({email:$('#authEmail').value.trim(),password:$('#authPassword').value});if(error){message('#authMessage',error.message,true);return;}await sessionQueue;if(isTeacher())$('#authScreen').hidden=true;};
 $('#signOutBtn').onclick=()=>supabase.auth.signOut();
 $('#scheduleDate').min=localDateISO(new Date());const nextWeek=new Date();nextWeek.setDate(nextWeek.getDate()+7);$('#scheduleDate').value=localDateISO(nextWeek);
-$('#pickFiveBtn').onclick=pickFiveForDate;$('#saveScheduleBtn').onclick=savePresentationSchedule;
+$('#pickFiveBtn').onclick=pickFiveForDate;$('#saveScheduleBtn').onclick=savePresentationSchedule;$('#saveScheduleDateBtn').onclick=saveScheduleDateOnly;
 supabase.auth.onAuthStateChange((_event,session)=>queueMicrotask(()=>sessionChanged(session)));
 supabase.auth.getSession().then(({data})=>sessionChanged(data.session));
 loadRoster();setInterval(loadRoster,10000);

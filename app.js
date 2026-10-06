@@ -239,3 +239,9 @@ $('#pickFiveBtn').onclick=pickFiveForDate;$('#saveScheduleBtn').onclick=savePres
 supabase.auth.onAuthStateChange((_event,session)=>queueMicrotask(()=>sessionChanged(session)));
 supabase.auth.getSession().then(({data})=>sessionChanged(data.session));
 loadRoster();setInterval(loadRoster,10000);
+async function syncAssessmentBackup(roll){
+  const retry=document.querySelector('#retryAssessmentBackupBtn');if(retry)retry.hidden=true;
+  const {data:backup,error}=await supabase.functions.invoke('backup-assessment',{body:{roll}});
+  if(error||!backup?.ok){const detail=error?.message||backup?.error||'Google Sheets backup did not update.';const status=document.querySelector('#assessmentMessage');if(status)status.textContent='Marks are saved in the class database, but the Google Sheets backup did not update: '+detail;if(retry){retry.dataset.roll=String(roll);retry.hidden=false;}return false;}
+  const status=document.querySelector('#assessmentMessage');if(status)status.textContent='Marks saved and Google Sheets backup updated.';return true;
+}

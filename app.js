@@ -91,7 +91,7 @@ function renderAssessmentForm(){
 }
 function updateAssessmentTotal(){
   const selects=Array.from($('#assessmentCriteriaList').querySelectorAll('[data-assessment-key]')),values=selects.map(select=>select.value),sum=values.reduce((total,value)=>total+(value===''?0:Number(value)),0),complete=selects.length===rubricCriteria.length&&values.every(value=>value!=='');
-  $('#assessmentTotal').innerHTML=sum+' <small>/ 20</small>';$('#saveAssessmentBtn').disabled=!assessmentSelectedRoll||!complete||!assessmentDirty;$('#resetAssessmentBtn').disabled=!assessmentSelectedRoll||!assessmentDirty;
+  $('#assessmentTotal').innerHTML=sum+' <small>/ 20</small>';$('#saveAssessmentBtn').disabled=!assessmentSelectedRoll||!complete||!assessmentDirty;$('#resetAssessmentBtn').disabled=!assessmentSelectedRoll||!assessmentDirty;$('#zeroAssessmentBtn').disabled=!assessmentSelectedRoll||assessmentDirty;
 }
 function selectAssessmentStudent(roll){
   if(assessmentDirty){$('#assessmentMessage').textContent='Save or reset the current marks before switching students.';return;}
@@ -120,7 +120,14 @@ async function saveAssessment(){
   if(error){$('#assessmentMessage').textContent='Could not save marks: '+error.message;updateAssessmentTotal();return;}
   const savedRoll=assessmentSelectedRoll;assessmentByRoll.set(savedRoll,Object.assign({roll:savedRoll},values));assessmentDirty=false;renderAssessmentForm();renderAssessmentRoster();await syncAssessmentBackup(savedRoll);
 }
-function resetAssessmentDraft(){if(!assessmentSelectedRoll)return;assessmentDirty=false;$('#assessmentMessage').textContent='Changes reset to the last saved scores.';renderAssessmentForm();}
+function resetAssessmentDraft(){if(!assessmentSelectedRoll)return;assessmentDirty=false;$('#assessmentMessage').textContent='Changes reset to the last saved scores.';renderAssessmentForm();}async function zeroAssessmentMarks(){
+  if(!assessmentSelectedRoll||assessmentDirty||!await verifyTeacherAction())return;
+  const values={subject_knowledge:0,digital_tools:0,presentation_slides:0,innovation_creativity:0,communication_skills:0,qa_critical_thinking:0};
+  $('#assessmentMessage').textContent='Setting saved marks to zero…';
+  const {error}=await supabase.rpc('save_student_assessment',{p_roll:assessmentSelectedRoll,p_subject_knowledge:0,p_digital_tools:0,p_presentation_slides:0,p_innovation_creativity:0,p_communication_skills:0,p_qa_critical_thinking:0});
+  if(error){$('#assessmentMessage').textContent='Could not set marks to zero: '+error.message;return;}
+  const savedRoll=assessmentSelectedRoll;assessmentByRoll.set(savedRoll,Object.assign({roll:savedRoll},values));assessmentDirty=false;renderAssessmentForm();renderAssessmentRoster();await syncAssessmentBackup(savedRoll);
+}
 function presentationEmbedUrl(raw){
   const url=new URL(raw);if(url.protocol!=='https:')return null;
   const slides=url.pathname.match(/\/presentation\/d\/([\w-]+)/);
@@ -279,7 +286,7 @@ function sessionChanged(session){
   });
   return sessionQueue;
 }
-$('#search').oninput=renderRoster;$('#assessmentSearch').oninput=renderAssessmentRoster;$('#saveAssessmentBtn').onclick=saveAssessment;$('#resetAssessmentBtn').onclick=resetAssessmentDraft;$('#retryAssessmentBackupBtn').onclick=retryAssessmentBackup;
+$('#search').oninput=renderRoster;$('#assessmentSearch').oninput=renderAssessmentRoster;$('#saveAssessmentBtn').onclick=saveAssessment;$('#resetAssessmentBtn').onclick=resetAssessmentDraft;$('#zeroAssessmentBtn').onclick=zeroAssessmentMarks;$('#retryAssessmentBackupBtn').onclick=retryAssessmentBackup;
 $('#prevTip').onclick=()=>{activeTip=(activeTip+presentationTips.length-1)%presentationTips.length;showPresentationTip();};
 $('#nextTip').onclick=()=>{activeTip=(activeTip+1)%presentationTips.length;showPresentationTip();};
 showPresentationTip();
